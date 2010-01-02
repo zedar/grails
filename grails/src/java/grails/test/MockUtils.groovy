@@ -38,6 +38,9 @@ import org.springframework.mock.web.MockHttpSession
 import org.springframework.validation.Errors
 import org.springframework.web.context.request.RequestContextHolder
 import grails.validation.ValidationException
+import org.springframework.validation.BeanPropertyBindingResult
+import org.springframework.validation.FieldError
+import org.springframework.validation.ObjectError
 
 /**
  * This is a utility/helper class for mocking various types of Grails
@@ -922,6 +925,41 @@ class MockUtils {
                     }
                 }
             }
+            return !errors.hasErrors()
+        }
+        
+        // add empty list of attributes validator, just to be inline with what HibernatePluginSupport.addValidationMethods does.
+        // It works lke validate(Map) with emply list of map attributes
+        clazz.metaClass.validate = { ->
+            return validate([:] as Map)
+        }
+        
+        // add validator that is able to discard changes to the domain objects, that possible validator can do. 
+        // Validator is required for compatibility with HibernatePluginSupport.addValidationMethods.
+        // Internally it call validator(Map) with evict parameter. Because current mock implementation of validator does not do any database interaction
+        // so this validator works exactly the same way as validate()
+        clazz.metaClass.validate = {Boolean b ->
+            return validate(['evict':b] as Map)
+        }
+        
+        // add validator that validates only fields that names are passed in input list of fieldsToValdate. All errors for the other fields are removed.
+        // Validator is required for compatibility with HibernatePluginSupport.addValidationMethods.
+        clazz.metaClass.validate = {List fieldsToValidate ->
+            if (!validate([:] as Map) && fieldsToValidate != null && fieldsToValidate.size() > 0) {
+                BeanPropertyBindingResult result = new BeanPropertyBindingResult(delegate, delegate.getClass().getName());
+                final List allErrors = errors.getAllErrors()
+                for (oe in allErrors) {
+                    if (oe instanceof FieldError) {
+                        FieldError fe = (FieldError)oe
+                        if (!fieldsToValidate.contains(fe.getField())) 
+                            continue
+                    }
+                    result.addError((ObjectError)oe)
+                }
+                MetaClass metaClass = GroovySystem.getMetaClassRegistry().getMetaClass(delegate.getClass())
+                metaClass.setProperty(delegate, 'errors', result)
+            }
+            
             return !errors.hasErrors()
         }
     }
